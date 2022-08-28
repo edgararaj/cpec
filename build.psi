@@ -1,0 +1,50 @@
+prj_name = "cpec"
+
+def compile():
+    """bat
+        clang++ {compiler_flags} -o {prj_name}.exe {src_dir}/main.cpp
+    """
+    return not error_code
+
+def compile_test():
+    print("TEST:")
+    test_dir = f"{script_dir}/test/"
+    test_output = f"{test_dir}/{prj_name}.exe"
+    if exists(test_output):
+        if not rm(test_output):
+            print_error("Failed to delete test output!")
+            exit(1)
+
+    with cd(test_dir):
+        """bat
+            clang++ {compiler_flags} -o {prj_name}.exe example.cpp
+        """
+
+compiler_flags = "--std=c++2a"
+src_dir = f"{script_dir}/src/"
+
+if "debug" in argv:
+    compiler_flags += " -O0 -g"
+    build_dir = f"{script_dir}/build_debug/"
+    print("Building debug version...")
+else:
+    compiler_flags += " -O2"
+    build_dir = f"{script_dir}/build_release/"
+
+print("CPEC:")
+if exists(build_dir):
+    if not rmdir(build_dir):
+        print_error("Failed to clear build directory!")
+        exit(1)
+
+if not exists(build_dir):
+    mkdir(build_dir)
+
+    with cd(build_dir):
+        if not compile():
+            print_error("Failed to compile!")
+        else:
+            print_success("Compiled sucessfully")
+
+if "test" in argv:
+    compile_test()
