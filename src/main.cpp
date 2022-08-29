@@ -10,7 +10,7 @@
 
 struct LexToken {
     enum Type {
-        VarType, Keyword, Name, Mut, Ptr, Eof, StartParen, EndParen, Assign, Array, Comma, SLComment
+        VarType, Keyword, Name, Mut, Ptr, Eof, StartParen, EndParen, StartRect, EndRect, Assign, Comma, SLComment
     } type;
 
     union {
@@ -93,6 +93,18 @@ LexToken lex_string(char*& string, bool lookahead)
         if (!lookahead) string += 1;
         return token;
     }
+    if (*string == '[')
+    {
+        token.type = LexToken::StartRect;
+        if (!lookahead) string += 1;
+        return token;
+    }
+    if (*string == ']')
+    {
+        token.type = LexToken::EndRect;
+        if (!lookahead) string += 1;
+        return token;
+    }
     if (*string == '=')
     {
         token.type = LexToken::Assign;
@@ -102,12 +114,6 @@ LexToken lex_string(char*& string, bool lookahead)
     if (strncmp(string, "//", 2) == 0)
     {
         token.type = LexToken::SLComment;
-        if (!lookahead) string += 2;
-        return token;
-    }
-    if (strncmp(string, "[]", 2) == 0)
-    {
-        token.type = LexToken::Array;
         if (!lookahead) string += 2;
         return token;
     }
@@ -154,64 +160,87 @@ LexToken lex_string(char*& string, bool lookahead)
 Var lex_var(char*& string, LexToken first_token)
 {
     Var variable;
-
-    if (first_token.type == LexToken::Mut)
+    LexToken lex_token2;
+    auto firstTime = true;
+    while (true)
     {
-        variable.is_mutable.push_back(true);
-    }
-
-    auto lex_token = first_token.type == LexToken::VarType ? first_token : lex_string(string, false);
-    if (lex_token.type == LexToken::VarType)
-    {
-        variable.var_type = lex_token.var_type;
-
-        while (true)
+        if (firstTime)
         {
-            auto lex_token2 = lex_string(string, true);
-            if (lex_token2.type != LexToken::Mut && lex_token2.type != LexToken::Ptr && lex_token2.type != LexToken::Array) {
-                break;
-            } else {
-                lex_string(string, false);
-            }
-
-            if (lex_token2.type == LexToken::Mut)
+            lex_token2 = first_token;
+        }
+        else
+        {
+            lex_token2 = lex_string(string, true);
+            if (lex_token2.type != LexToken::VarType && lex_token2.type != LexToken::Mut && lex_token2.type != LexToken::Ptr && lex_token2.type != LexToken::StartRect)
             {
-                if (variable.is_mutable.size() == variable.modifier.size())
-                {
-                    variable.is_mutable.push_back(true);
-                }
-                else 
-                {
-                    DebugLog(L"se fudeu");
-                    break;
-                }
+                break;
             }
             else
             {
-                if (variable.is_mutable.size() == variable.modifier.size())
-                {
-                    variable.is_mutable.push_back(false);
-                }
-
-                if (lex_token2.type == LexToken::Ptr)
-                {
-                    variable.modifier.push_back(Var::Modifier::Ptr);
-                }
-                else if (lex_token2.type == LexToken::Array)
-                {
-                    variable.modifier.push_back(Var::Modifier::Array);
-                }
+                lex_string(string, false);
             }
-        } 
-    }
-    else
+        }
+
+        if (lex_token2.type == LexToken::Mut)
+        {
+            if (variable.is_mutable.size() == variable.modifier.size())
+            {
+                variable.is_mutable.push_back(true);
+            }
+            else 
+            {
+                DebugLog(L"se fudeu");
+                break;
+            }
+        }
+        else
+        {
+            if (variable.is_mutable.size() == variable.modifier.size())
+            {
+                variable.is_mutable.push_back(false);
+            }
+
+            if (lex_token2.type == LexToken::Ptr)
+            {
+                variable.modifier.push_back(Var::Modifier::Ptr);
+            }
+            else if (lex_token2.type == LexToken::StartRect)
+            {
+                variable.modifier.push_back(Var::Modifier::Array);
+            }
+            else if (lex_token2.type == LexToken::VarType)
+            {
+                variable.var_type = lex_token2.var_type;
+            }
+        }
+
+        firstTime = false;
+    } 
+
+    auto starting_arrays = 0;
+    for (auto modifier: variable.modifier) 
     {
-        DebugLog(L"se fudeu");
+        if (modifier == Var::Array)
+            starting_arrays++;
     }
 
-    if (variable.is_mutable.size() == variable.modifier.size())
+    auto closing_arrays = 0;
+    while (true)
     {
-        variable.is_mutable.push_back(false);
+        if (lex_token2.type == LexToken::EndRect)
+        {
+            lex_token2 = lex_string(string, false);
+            closing_arrays++;
+        }
+        else
+        {
+            if (closing_arrays != starting_arrays)
+            {
+                DebugLog(L"se fudeu");
+            }
+            break;
+        }
+        lex_token2 = lex_string(string, true);
     }
 
     return variable;
@@ -227,7 +256,7 @@ Function lex_function(char*& string, Var return_type, char* name)
     while (true)
     {
         auto lex_token = lex_string(string, false);
-        if (lex_token.type == LexToken::Mut || lex_token.type == LexToken::VarType)
+        if (lex_token.type == LexToken::Mut || lex_token.type == LexToken::VarType || lex_token.type == LexToken::StartRect)
         {
             auto var = lex_var(string, lex_token);
             lex_token = lex_string(string, false);
@@ -274,21 +303,19 @@ Function lex_function(char*& string, Var return_type, char* name)
 
 std::string recurse_var(Var return_type, int i)
 {
-    assert(i >= 0);
-    auto possible_const = !return_type.is_mutable[i] ? "const" : "";
+    assert(i < return_type.is_mutable.size());
+    auto possible_const = !return_type.is_mutable[i] ? " const" : "";
 
-    auto modifier_i = return_type.modifier.size() - (return_type.is_mutable.size() - i);
-
-    if (modifier_i < return_type.modifier.size() && return_type.modifier[modifier_i] == Var::Modifier::Array)
+    if (i < return_type.modifier.size() && return_type.modifier[i] == Var::Modifier::Array)
     {
-        return std::format("std::span<{}> {}", recurse_var(return_type, --i), possible_const);
+        return std::format("std::span<{}>{}", recurse_var(return_type, ++i), possible_const);
     }
-    else if (modifier_i < return_type.modifier.size() && return_type.modifier[modifier_i] == Var::Modifier::Ptr)
+    else if (i < return_type.modifier.size() && return_type.modifier[i] == Var::Modifier::Ptr)
     {
-        return std::format("{}* {}", recurse_var(return_type, --i), possible_const);
+        return std::format("{}*{}", recurse_var(return_type, ++i), possible_const);
     }
     else {
-        return std::format("{} {}", var_types[return_type.var_type], possible_const);
+        return std::format("{}{}", var_types[return_type.var_type], possible_const);
     }
 }
 
@@ -314,7 +341,7 @@ int wmain(int argc, const wchar_t** argv)
         while (true)
         {
             auto lex_token = lex_string(string, false);
-            if (lex_token.type == LexToken::Mut || lex_token.type == LexToken::VarType)
+            if (lex_token.type == LexToken::Mut || lex_token.type == LexToken::VarType || lex_token.type == LexToken::StartRect)
             {
                 auto variable = lex_var(string, lex_token);
 
@@ -325,14 +352,14 @@ int wmain(int argc, const wchar_t** argv)
                     if (lex_token3.type == LexToken::StartParen)
                     {
                         auto function = lex_function(string, variable, lex_token2.name);
-                        auto out = recurse_var(function.return_type, function.return_type.is_mutable.size() - 1);
+                        auto out = recurse_var(function.return_type, 0);
                         auto function_name = post_lex_string(function.name);
                             printf("%s %s(", out.c_str(), std::string(function_name.content, function_name.size).c_str());
 
                         for (auto j = 0; j < function.params.size(); j++)
                         {
                             auto param = function.params[j];
-                            auto param_out = recurse_var(param, param.is_mutable.size() - 1);
+                            auto param_out = recurse_var(param, 0);
                             printf("%s", param_out.c_str());
                             if (j != function.params.size() - 1)
                             {
@@ -343,7 +370,7 @@ int wmain(int argc, const wchar_t** argv)
                     }
                     else if (lex_token3.type == LexToken::Assign)
                     {
-                        auto assignment = lex_assignement(string, variable, lex_token2.name);
+                        //auto assignment = lex_assignement(string, variable, lex_token2.name);
                     }
                     else
                     {
