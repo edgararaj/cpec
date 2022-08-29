@@ -10,7 +10,7 @@
 
 struct LexToken {
     enum Type {
-        VarType, Keyword, Name, Mut, Ptr, Eof, StartParen, EndParen, Assign, Array, Comma
+        VarType, Keyword, Name, Mut, Ptr, Eof, StartParen, EndParen, Assign, Array, Comma, SLComment
     } type;
 
     union {
@@ -25,64 +25,95 @@ struct Var {
 
     std::vector<Modifier> modifier;
     std::vector<bool> is_mutable;
+    char* name;
     enum VarType var_type;
 };
+
+Buffer post_lex_string(char* string)
+{
+    size_t size = 0;
+    char* terminated = string; 
+    while (*terminated && (*terminated >= '0' && *terminated >= '9' || *terminated >= 'A' && *terminated <= 'Z' || *terminated >= 'a' && *terminated <= 'z')) 
+    {
+        terminated++; 
+        size++;
+    }
+    return {string, size};
+}
 
 struct Function {
     Var return_type;
     char* name;
-    std::unordered_map<const char *, Var> params;
+    std::vector<Var> params;
+
+    bool exists_param_with_name(Buffer lookup)
+    {
+        for (auto param: params)
+        {
+            if (strncmp(param.name, lookup.content, lookup.size) == 0)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 LexToken lex_string(char*& string, bool lookahead)
 {
-    while (*string == ' ' || *string == '\n') string++; // skip spaces
+    while (*string == ' ' | *string == '\n') string++; // skip spaces
 
     LexToken token;
     if (!*string)
     {
-        token.type = LexToken::Type::Eof;
+        token.type = LexToken::Eof;
         return token;
     }
     if (*string == ',')
     {
-        token.type = LexToken::Type::Comma;
+        token.type = LexToken::Comma;
         if (!lookahead) string += 1;
         return token;
     }
     if (*string == '*')
     {
-        token.type = LexToken::Type::Ptr;
+        token.type = LexToken::Ptr;
         if (!lookahead) string += 1;
         return token;
     }
     if (*string == '(')
     {
-        token.type = LexToken::Type::StartParen;
+        token.type = LexToken::StartParen;
         if (!lookahead) string += 1;
         return token;
     }
     if (*string == ')')
     {
-        token.type = LexToken::Type::EndParen;
+        token.type = LexToken::EndParen;
         if (!lookahead) string += 1;
         return token;
     }
     if (*string == '=')
     {
-        token.type = LexToken::Type::Assign;
+        token.type = LexToken::Assign;
         if (!lookahead) string += 1;
+        return token;
+    }
+    if (strncmp(string, "//", 2) == 0)
+    {
+        token.type = LexToken::SLComment;
+        if (!lookahead) string += 2;
         return token;
     }
     if (strncmp(string, "[]", 2) == 0)
     {
-        token.type = LexToken::Type::Array;
+        token.type = LexToken::Array;
         if (!lookahead) string += 2;
         return token;
     }
     if (strncmp(string, "mut", 3) == 0)
     {
-        token.type = LexToken::Type::Mut;
+        token.type = LexToken::Mut;
         if (!lookahead) string += 3;
         return token;
     }
@@ -90,7 +121,7 @@ LexToken lex_string(char*& string, bool lookahead)
     {
         if (strncmp(keywords[i], string, strlen(keywords[i])) == 0)
         {
-            token.type = LexToken::Type::Keyword;
+            token.type = LexToken::Keyword;
             token.keyword = (Keyword)i;
             if (!lookahead) string += strlen(keywords[i]);
             return token;
@@ -100,17 +131,17 @@ LexToken lex_string(char*& string, bool lookahead)
     {
         if (strncmp(var_types[i], string, strlen(var_types[i])) == 0)
         {
-            token.type = LexToken::Type::VarType;
+            token.type = LexToken::VarType;
             token.var_type = (VarType)i;
             if (!lookahead) string += strlen(var_types[i]);
             return token;
         }
     }
-    token.type = LexToken::Type::Name;
+    token.type = LexToken::Name;
     token.name = string;
     if (!lookahead)
     {
-        while (*string && (*string >= '0' && *string >= '9' || *string >= 'A' && *string <= 'Z' || *string >= 'a' && *string <= 'z')) string++;
+        while (*string && (*string >= '0' && *string <= '9' || *string >= 'A' && *string <= 'Z' || *string >= 'a' && *string <= 'z')) string++;
     }
 
     return token;
@@ -120,32 +151,30 @@ LexToken lex_string(char*& string, bool lookahead)
 // {
 // }
 
-Var lex_var(char*& string)
+Var lex_var(char*& string, LexToken first_token)
 {
     Var variable;
 
-    auto lex_token = lex_string(string, true);
-    if (lex_token.type == LexToken::Type::Mut)
+    if (first_token.type == LexToken::Mut)
     {
         variable.is_mutable.push_back(true);
-        lex_string(string, false);
     }
 
-    lex_token = lex_string(string, false);
-    if (lex_token.type == LexToken::Type::VarType)
+    auto lex_token = first_token.type == LexToken::VarType ? first_token : lex_string(string, false);
+    if (lex_token.type == LexToken::VarType)
     {
         variable.var_type = lex_token.var_type;
 
         while (true)
         {
             auto lex_token2 = lex_string(string, true);
-            if (lex_token2.type != LexToken::Type::Mut && lex_token2.type != LexToken::Type::Ptr && lex_token2.type != LexToken::Type::Array) {
+            if (lex_token2.type != LexToken::Mut && lex_token2.type != LexToken::Ptr && lex_token2.type != LexToken::Array) {
                 break;
             } else {
                 lex_string(string, false);
             }
 
-            if (lex_token2.type == LexToken::Type::Mut)
+            if (lex_token2.type == LexToken::Mut)
             {
                 if (variable.is_mutable.size() == variable.modifier.size())
                 {
@@ -164,11 +193,11 @@ Var lex_var(char*& string)
                     variable.is_mutable.push_back(false);
                 }
 
-                if (lex_token2.type == LexToken::Type::Ptr)
+                if (lex_token2.type == LexToken::Ptr)
                 {
                     variable.modifier.push_back(Var::Modifier::Ptr);
                 }
-                else if (lex_token2.type == LexToken::Type::Array)
+                else if (lex_token2.type == LexToken::Array)
                 {
                     variable.modifier.push_back(Var::Modifier::Array);
                 }
@@ -189,7 +218,7 @@ Var lex_var(char*& string)
 }
 
 
-Function lex_function(char* string, Var return_type, char* name)
+Function lex_function(char*& string, Var return_type, char* name)
 {
     Function function;
     function.return_type = return_type;
@@ -197,23 +226,24 @@ Function lex_function(char* string, Var return_type, char* name)
 
     while (true)
     {
-        auto lex_token = lex_string(string, true);
-        if (lex_token.type == LexToken::Type::Mut || lex_token.type == LexToken::Type::VarType)
+        auto lex_token = lex_string(string, false);
+        if (lex_token.type == LexToken::Mut || lex_token.type == LexToken::VarType)
         {
-            auto var = lex_var(string);
+            auto var = lex_var(string, lex_token);
             lex_token = lex_string(string, false);
-            if (lex_token.type == LexToken::Type::Name)
+            if (lex_token.type == LexToken::Name)
             {
-                if (!function.params.count(lex_token.name))
+                if (!function.exists_param_with_name(post_lex_string(lex_token.name)))
                 {
-                    function.params[lex_token.name] = var;
+                    var.name = lex_token.name;
+                    function.params.push_back(var);
 
                     lex_token = lex_string(string, false);
-                    if (lex_token.type == LexToken::Type::EndParen)
+                    if (lex_token.type == LexToken::EndParen)
                     {
                         break;
                     }
-                    else if (lex_token.type != LexToken::Type::Comma)
+                    else if (lex_token.type != LexToken::Comma)
                     {
                         DebugLog(L"se fudeu");
                         break;
@@ -262,15 +292,6 @@ std::string recurse_var(Var return_type, int i)
     }
 }
 
-char* null_terminate_ascii(char* string)
-{
-    char* terminated = string; 
-    while (*terminated && (*terminated >= '0' && *terminated >= '9' || *terminated >= 'A' && *terminated <= 'Z' || *terminated >= 'a' && *terminated <= 'z')) terminated++;
-    *terminated = 0;
-    return terminated;
-}
-
-
 int wmain(int argc, const wchar_t** argv)
 {
     if (argc <= 1)
@@ -292,35 +313,37 @@ int wmain(int argc, const wchar_t** argv)
 
         while (true)
         {
-            auto lex_token = lex_string(string, true);
-            if (lex_token.type == LexToken::Type::Mut || lex_token.type == LexToken::Type::VarType)
+            auto lex_token = lex_string(string, false);
+            if (lex_token.type == LexToken::Mut || lex_token.type == LexToken::VarType)
             {
-                auto variable = lex_var(string);
+                auto variable = lex_var(string, lex_token);
 
                 auto lex_token2 = lex_string(string, false);
-                if (lex_token2.type == LexToken::Type::Name)
+                if (lex_token2.type == LexToken::Name)
                 {
                     auto lex_token3 = lex_string(string, false);
-                    if (lex_token3.type == LexToken::Type::StartParen)
+                    if (lex_token3.type == LexToken::StartParen)
                     {
                         auto function = lex_function(string, variable, lex_token2.name);
                         auto out = recurse_var(function.return_type, function.return_type.is_mutable.size() - 1);
-                        printf("%s %s(", out.c_str(), null_terminate_ascii(function.name));
+                        auto function_name = post_lex_string(function.name);
+                            printf("%s %s(", out.c_str(), std::string(function_name.content, function_name.size).c_str());
 
-                        for (auto param = function.params.begin(); param != function.params.end(); param++)
+                        for (auto j = 0; j < function.params.size(); j++)
                         {
-                            auto param_out = recurse_var(param->second, param->second.is_mutable.size() - 1);
+                            auto param = function.params[j];
+                            auto param_out = recurse_var(param, param.is_mutable.size() - 1);
                             printf("%s", param_out.c_str());
-                            if (std::next(param) != function.params.end())
+                            if (j != function.params.size() - 1)
                             {
                                 printf(", ");
                             }
                         }
                         printf(")\n");
                     }
-                    else if (lex_token3.type == LexToken::Type::Assign)
+                    else if (lex_token3.type == LexToken::Assign)
                     {
-                        // auto assignment = lex_assignement(string, variable, lex_token2.name);
+                        auto assignment = lex_assignement(string, variable, lex_token2.name);
                     }
                     else
                     {
@@ -347,7 +370,20 @@ int wmain(int argc, const wchar_t** argv)
                 {
                 }
             } 
-            else if (lex_token.type == LexToken::Name)
+            else if (lex_token.type == LexToken::SLComment)
+            {
+                auto new_line = strchr(string, '\n');
+                if (new_line)
+                {
+                    string = new_line + 1;
+                }
+                else
+                {
+                    DebugLog(L"se fudeu");
+                    return 1;
+                }
+            }
+            else
             {
                 DebugLog(L"se fudeu");
                 return 1;

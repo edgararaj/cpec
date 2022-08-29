@@ -20,7 +20,7 @@ def compile_test():
             clang++ {compiler_flags} -o {prj_name}.exe example.cpp
         """
 
-compiler_flags = "--std=c++2a"
+compiler_flags = "--std=c++2a -Wall -Wno-logical-op-parentheses -Wpedantic -Wshadow"
 src_dir = f"{script_dir}/src/"
 
 if "debug" in argv:
