@@ -10,7 +10,7 @@
 
 struct LexToken {
     enum Type {
-        VarType, Keyword, Name, Mut, Ptr, Eof, StartParen, EndParen, StartRect, EndRect, Assign, Comma, SLComment
+        VarType, Keyword, Name, Number, Mut, Ptr, Eof, StartParen, EndParen, StartRect, EndRect, StartCurly, EndCurly, Assign, Comma, SLComment
     } type;
 
     union {
@@ -29,7 +29,7 @@ struct Var {
     enum VarType var_type;
 };
 
-Buffer post_lex_string(char* string)
+Buffer buffer_string_ptr(char* string)
 {
     size_t size = 0;
     char* terminated = string; 
@@ -105,12 +105,35 @@ LexToken lex_string(char*& string, bool lookahead)
         if (!lookahead) string += 1;
         return token;
     }
+    if (*string == '{')
+    {
+        token.type = LexToken::StartCurly;
+        if (!lookahead) string += 1;
+        return token;
+    }
+    if (*string == '}')
+    {
+        token.type = LexToken::EndCurly;
+        if (!lookahead) string += 1;
+        return token;
+    }
     if (*string == '=')
     {
         token.type = LexToken::Assign;
         if (!lookahead) string += 1;
         return token;
     }
+
+    auto candidate = string;
+    while (*string >= '0' && *string <= '9' || *string == '.') candidate++;
+    if (!(*candidate >= 'A' && *candidate <= 'Z' || *candidate >= 'a' && *candidate <= 'z'))
+    {
+        token.type = LexToken::Number;
+        token.name = string;
+        if (!lookahead) string = candidate;
+        return token;
+    }
+
     if (strncmp(string, "//", 2) == 0)
     {
         token.type = LexToken::SLComment;
@@ -153,9 +176,38 @@ LexToken lex_string(char*& string, bool lookahead)
     return token;
 }
 
-// Assignement lex_assignement(char* string, Var dest_type, const char* name)
-// {
-// }
+struct Op {
+    enum Type {
+        Ternary, Add, Sub, AtomNumber
+    } type;
+
+    union {
+        struct {
+            struct Op *op1;
+            struct Op *op2;
+            struct Op *op3;
+        };
+        Var var;
+        char* string;
+    };
+};
+
+struct Assignment {
+    Var dest;
+    Op op;
+};
+
+Assignment lex_assignement(char* string, Var dest_type)
+{
+    Assignment assignment;
+
+    auto lex_token = lex_string(string, false);
+    if (lex_token.type == LexToken::Number)
+    {
+        assignment.op.type = Op::AtomNumber;
+        assignment.op.string = lex_token.name;
+    }
+}
 
 Var lex_var(char*& string, LexToken first_token)
 {
@@ -246,6 +298,11 @@ Var lex_var(char*& string, LexToken first_token)
     return variable;
 }
 
+bool possibly_var(LexToken::Type type)
+{
+    return type == LexToken::Mut || type == LexToken::VarType || type == LexToken::StartRect;
+}
+
 
 Function lex_function(char*& string, Var return_type, char* name)
 {
@@ -262,7 +319,7 @@ Function lex_function(char*& string, Var return_type, char* name)
             lex_token = lex_string(string, false);
             if (lex_token.type == LexToken::Name)
             {
-                if (!function.exists_param_with_name(post_lex_string(lex_token.name)))
+                if (!function.exists_param_with_name(buffer_string_ptr(lex_token.name)))
                 {
                     var.name = lex_token.name;
                     function.params.push_back(var);
@@ -297,7 +354,30 @@ Function lex_function(char*& string, Var return_type, char* name)
         }
     }
 
-    //string = strstr(string, "}");
+    auto lex_token = lex_string(string, false);
+    if (lex_token.type == LexToken::StartCurly)
+    {
+        lex_token = lex_string(string, false);
+        if (possibly_var(lex_token.type))
+        {
+            auto variable = lex_var(string, lex_token);
+
+            lex_token = lex_string(string, false);
+            if (lex_token.type == LexToken::Name)
+            {
+                variable.name = lex_token.name;
+                if (lex_token.type == LexToken::Assign)
+                {
+                    auto assignment = lex_assignement(string, variable);
+                }
+            }
+        }
+    }
+    else
+    {
+        DebugLog(L"se fudeu");
+    }
+
     return function;
 }
 
@@ -353,8 +433,8 @@ int wmain(int argc, const wchar_t** argv)
                     {
                         auto function = lex_function(string, variable, lex_token2.name);
                         auto out = recurse_var(function.return_type, 0);
-                        auto function_name = post_lex_string(function.name);
-                            printf("%s %s(", out.c_str(), std::string(function_name.content, function_name.size).c_str());
+                        auto function_name = buffer_string_ptr(function.name);
+                        printf("%s %s(", out.c_str(), std::string(function_name.content, function_name.size).c_str());
 
                         for (auto j = 0; j < function.params.size(); j++)
                         {
