@@ -9,7 +9,7 @@
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceRoot}/build_debug/cpec.exe",
-            "args": ["test/example_function.cpp"],
+            "args": ["test/example.cpp"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

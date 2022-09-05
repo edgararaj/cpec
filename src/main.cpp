@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <format>
 #include <string>
+#include <stdlib.h>
 
 #include "utils.h"
 #include "file_utils.cpp"
@@ -10,7 +11,7 @@
 
 struct LexToken {
     enum Type {
-        VarType, Keyword, Name, Number, Mut, Ptr, Eof, StartParen, EndParen, StartRect, EndRect, StartCurly, EndCurly, Assign, Comma, SLComment
+        VarType, Keyword, Name, Number, Mut, Let, Ptr, Eof, StartParen, EndParen, StartRect, EndRect, StartCurly, EndCurly, Assign, Comma, SLComment
     } type;
 
     union {
@@ -146,6 +147,12 @@ LexToken lex_string(char*& string, bool lookahead)
         if (!lookahead) string += 3;
         return token;
     }
+    if (strncmp(string, "let", 3) == 0)
+    {
+        token.type = LexToken::Let;
+        if (!lookahead) string += 3;
+        return token;
+    }
     for (auto i = 0; i < COUNTOF(keywords); i++)
     {
         if (strncmp(keywords[i], string, strlen(keywords[i])) == 0)
@@ -176,54 +183,44 @@ LexToken lex_string(char*& string, bool lookahead)
     return token;
 }
 
-struct Op {
-    enum Type {
-        Ternary, Add, Sub, AtomNumber
-    } type;
-
-    union {
-        struct {
-            struct Op *op1;
-            struct Op *op2;
-            struct Op *op3;
-        };
-        Var var;
-        char* string;
-    };
+struct VarDecl {
+    Var lhs;
+    Buffer rhs;
 };
 
-struct Assignment {
-    Var dest;
-    Op op;
-};
-
-Assignment lex_assignement(char* string, Var dest_type)
+VarDecl lex_vardecl(char*& string, Var dest_type)
 {
-    Assignment assignment;
+    VarDecl var_decl = {.lhs = dest_type};
+    while (*string && *string == ' ') string++;
+    var_decl.rhs.content = string;
 
-    auto lex_token = lex_string(string, false);
-    if (lex_token.type == LexToken::Number)
+    auto size = 0;
+    while (*string && *string != '\n') 
     {
-        assignment.op.type = Op::AtomNumber;
-        assignment.op.string = lex_token.name;
+        size++;
+        string++;
     }
+    var_decl.rhs.size = size;
+    while (*string && *string == '\n') string++;
+
+    return var_decl;
 }
 
 Var lex_var(char*& string, LexToken first_token)
 {
-    Var variable;
+    Var variable = {.var_type = VarType::Any};
     LexToken lex_token2;
-    auto firstTime = true;
+    auto first_time = true;
     while (true)
     {
-        if (firstTime)
+        if (first_time)
         {
             lex_token2 = first_token;
         }
         else
         {
             lex_token2 = lex_string(string, true);
-            if (lex_token2.type != LexToken::VarType && lex_token2.type != LexToken::Mut && lex_token2.type != LexToken::Ptr && lex_token2.type != LexToken::StartRect)
+            if (lex_token2.type != LexToken::VarType && lex_token2.type != LexToken::Mut && lex_token2.type != LexToken::Ptr && lex_token2.type != LexToken::StartRect && lex_token2.type != LexToken::Let)
             {
                 break;
             }
@@ -264,9 +261,17 @@ Var lex_var(char*& string, LexToken first_token)
             {
                 variable.var_type = lex_token2.var_type;
             }
+            else if (lex_token2.type == LexToken::Let)
+            {
+                if (!first_time)
+                {
+                    DebugLog(L"se fudeu");
+                    break;
+                }
+            }
         }
 
-        firstTime = false;
+        first_time = false;
     } 
 
     auto starting_arrays = 0;
@@ -300,7 +305,7 @@ Var lex_var(char*& string, LexToken first_token)
 
 bool possibly_var(LexToken::Type type)
 {
-    return type == LexToken::Mut || type == LexToken::VarType || type == LexToken::StartRect;
+    return type == LexToken::Mut || type == LexToken::VarType || type == LexToken::StartRect || type == LexToken::Let;
 }
 
 
@@ -313,7 +318,7 @@ Function lex_function(char*& string, Var return_type, char* name)
     while (true)
     {
         auto lex_token = lex_string(string, false);
-        if (lex_token.type == LexToken::Mut || lex_token.type == LexToken::VarType || lex_token.type == LexToken::StartRect)
+        if (possibly_var(lex_token.type))
         {
             auto var = lex_var(string, lex_token);
             lex_token = lex_string(string, false);
@@ -349,8 +354,15 @@ Function lex_function(char*& string, Var return_type, char* name)
         }
         else
         {
-            DebugLog(L"se fudeu");
-            break;
+            if (lex_token.type == LexToken::EndParen)
+            {
+                break;
+            }
+            else
+            {
+                DebugLog(L"se fudeu");
+                break;
+            }
         }
     }
 
@@ -368,7 +380,7 @@ Function lex_function(char*& string, Var return_type, char* name)
                 variable.name = lex_token.name;
                 if (lex_token.type == LexToken::Assign)
                 {
-                    auto assignment = lex_assignement(string, variable);
+                    auto assignment = lex_vardecl(string, variable);
                 }
             }
         }
@@ -385,6 +397,11 @@ std::string recurse_var(Var return_type, int i)
 {
     assert(i < return_type.is_mutable.size());
     auto possible_const = !return_type.is_mutable[i] ? " const" : "";
+
+    if (return_type.var_type == VarType::Any)
+    {
+        return std::format("auto{}", possible_const);
+    }
 
     if (i < return_type.modifier.size() && return_type.modifier[i] == Var::Modifier::Array)
     {
@@ -421,7 +438,7 @@ int wmain(int argc, const wchar_t** argv)
         while (true)
         {
             auto lex_token = lex_string(string, false);
-            if (lex_token.type == LexToken::Mut || lex_token.type == LexToken::VarType || lex_token.type == LexToken::StartRect)
+            if (possibly_var(lex_token.type))
             {
                 auto variable = lex_var(string, lex_token);
 
@@ -450,7 +467,12 @@ int wmain(int argc, const wchar_t** argv)
                     }
                     else if (lex_token3.type == LexToken::Assign)
                     {
-                        //auto assignment = lex_assignement(string, variable, lex_token2.name);
+                        variable.name = lex_token2.name;
+                        auto assignment = lex_vardecl(string, variable);
+
+                        auto out = recurse_var(assignment.lhs, 0);
+                        auto var_name = buffer_string_ptr(assignment.lhs.name);
+                        printf("%s %s = %s", out.c_str(), std::string(var_name.content, var_name.size).c_str(), std::string(assignment.rhs.content, assignment.rhs.size).c_str());
                     }
                     else
                     {

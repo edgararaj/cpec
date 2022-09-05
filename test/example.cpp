@@ -1,4 +1,5 @@
-int main()
+i8 main()
 {
-    auto a = 1 + 1
 }
+
+i8 a = 1 + 1
