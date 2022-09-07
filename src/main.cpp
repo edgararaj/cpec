@@ -155,7 +155,7 @@ LexToken lex_string(char*& string, bool lookahead)
     }
     for (auto i = 0; i < COUNTOF(keywords); i++)
     {
-        if (strncmp(keywords[i], string, strlen(keywords[i])) == 0)
+        if (keywords[i] && strncmp(keywords[i], string, strlen(keywords[i])) == 0)
         {
             token.type = LexToken::Keyword;
             token.keyword = (Keyword)i;
@@ -165,7 +165,7 @@ LexToken lex_string(char*& string, bool lookahead)
     }
     for (auto i = 0; i < COUNTOF(var_types); i++)
     {
-        if (strncmp(var_types[i], string, strlen(var_types[i])) == 0)
+        if (var_types[i] && strncmp(var_types[i], string, strlen(var_types[i])) == 0)
         {
             token.type = LexToken::VarType;
             token.var_type = (VarType)i;
@@ -188,6 +188,22 @@ struct VarDecl {
     Buffer rhs;
 };
 
+VarDecl lex_vardecl_while(char*& string, Var dest_type)
+{
+    VarDecl var_decl = {.lhs = dest_type};
+    while (*string && *string == ' ') string++;
+    var_decl.rhs.content = string;
+
+    var_decl.rhs.size = 0;
+    while (*string && *string != '\n' && *string != ')' && *string != '{') 
+    {
+        var_decl.rhs.size++;
+        string++;
+    }
+
+    return var_decl;
+}
+
 VarDecl lex_vardecl(char*& string, Var dest_type)
 {
     VarDecl var_decl = {.lhs = dest_type};
@@ -201,7 +217,6 @@ VarDecl lex_vardecl(char*& string, Var dest_type)
         string++;
     }
     var_decl.rhs.size = size;
-    while (*string && *string == '\n') string++;
 
     return var_decl;
 }
@@ -308,6 +323,148 @@ bool possibly_var(LexToken::Type type)
     return type == LexToken::Mut || type == LexToken::VarType || type == LexToken::StartRect || type == LexToken::Let;
 }
 
+struct Capsule {
+    Buffer start, end;
+};
+
+struct While {
+    std::vector<Capsule> capsules;
+    VarDecl var_decl;
+};
+
+void lex_while_inner(char*& string, struct While& while_statement, bool outer_most)
+{
+    Capsule capsule = {};
+
+    char* pre_paren = string;
+
+    while (true)
+    {
+        auto lex_token = lex_string(string, false);
+        if (lex_token.type == LexToken::StartParen)
+        {
+            capsule.start.content = pre_paren;
+            capsule.start.size = string - pre_paren;
+
+            lex_while_inner(string, while_statement, false);
+
+            capsule.end.content = string;
+            while (true)
+            {
+                lex_token = lex_string(string, false);
+                if (lex_token.type == LexToken::EndParen)
+                {
+                    capsule.end.size = string - capsule.end.content;
+                }
+            }
+            while_statement.capsules.push_back(capsule);
+            return;
+        }
+        else if (possibly_var(lex_token.type))
+        {
+            auto var = lex_var(string, lex_token);
+            lex_token = lex_string(string, false);
+            if (lex_token.type == LexToken::Name)
+            {
+                var.name = lex_token.name;
+                lex_token = lex_string(string, false);
+                if (lex_token.type == LexToken::Assign)
+                {
+                    auto assignment = lex_vardecl_while(string, var);
+                    while_statement.var_decl = assignment;
+                    return;
+                }
+                else
+                {
+                    DebugLog(L"se fudeu");
+                    return;
+                }
+            }
+        }
+        else if (lex_token.type == LexToken::EndParen)
+        {
+            if (!outer_most) return;
+            DebugLog(L"se fudeu");
+            return;
+        }
+    }
+}
+
+struct While lex_while(char*& string)
+{
+    struct While while_statement;
+
+    lex_while_inner(string, while_statement, true);
+
+    auto lex_token = lex_string(string, false);
+    if (lex_token.type == LexToken::StartCurly)
+    {
+        while (lex_string(string, true).type != LexToken::EndCurly)
+        {
+            lex_string(string, false);
+        }
+        lex_string(string, false);
+    }
+    else
+    {
+        DebugLog(L"se fudeu");
+    }
+
+    return while_statement;
+}
+
+bool is_newline_next(char* string)
+{
+    auto is_newline_next = false;
+    while (*string)
+    {
+        if (*string == '\n')
+        {
+            is_newline_next = true;
+            break;
+        }
+    }
+    return is_newline_next;
+}
+
+std::string recurse_var(Var return_type, int i)
+{
+    assert(i < return_type.is_mutable.size());
+    auto possible_const = !return_type.is_mutable[i] ? " const" : "";
+
+    if (return_type.var_type == VarType::Any)
+    {
+        return std::format("auto{}", possible_const);
+    }
+
+    if (i < return_type.modifier.size() && return_type.modifier[i] == Var::Modifier::Array)
+    {
+        return std::format("std::span<{}>{}", recurse_var(return_type, ++i), possible_const);
+    }
+    else if (i < return_type.modifier.size() && return_type.modifier[i] == Var::Modifier::Ptr)
+    {
+        return std::format("{}*{}", recurse_var(return_type, ++i), possible_const);
+    }
+    else {
+        return std::format("{}{}", var_types[return_type.var_type], possible_const);
+    }
+}
+
+
+std::string recurse_while(struct While while_statement, int i)
+{
+    if (i < while_statement.capsules.size())
+    {
+        auto start = while_statement.capsules[i].start;
+        auto end = while_statement.capsules[i].end;
+        return std::format("{}(){}", std::string(start.content, start.size).c_str(), recurse_while(while_statement, ++i), std::string(end.content, end.size).c_str());
+    }
+    else
+    {
+        auto function_name = buffer_string_ptr(while_statement.var_decl.lhs.name);
+        return std::format("{} {} = {}", recurse_var(while_statement.var_decl.lhs, 0).c_str(), std::string(function_name.content, function_name.size).c_str(), std::string(while_statement.var_decl.rhs.content, while_statement.var_decl.rhs.size).c_str());
+    }
+}
 
 Function lex_function(char*& string, Var return_type, char* name)
 {
@@ -369,19 +526,35 @@ Function lex_function(char*& string, Var return_type, char* name)
     auto lex_token = lex_string(string, false);
     if (lex_token.type == LexToken::StartCurly)
     {
-        lex_token = lex_string(string, false);
-        if (possibly_var(lex_token.type))
+        while (true)
         {
-            auto variable = lex_var(string, lex_token);
-
             lex_token = lex_string(string, false);
-            if (lex_token.type == LexToken::Name)
+            if (possibly_var(lex_token.type))
             {
-                variable.name = lex_token.name;
-                if (lex_token.type == LexToken::Assign)
+                auto variable = lex_var(string, lex_token);
+
+                lex_token = lex_string(string, false);
+                if (lex_token.type == LexToken::Name)
                 {
-                    auto assignment = lex_vardecl(string, variable);
+                    variable.name = lex_token.name;
+                    if (lex_token.type == LexToken::Assign || is_newline_next(string))
+                    {
+                        auto assignment = lex_vardecl(string, variable);
+                    }
                 }
+            }
+            else if (lex_token.type == LexToken::Keyword)
+            {
+                if (lex_token.keyword == Keyword::While)
+                {
+                    auto while_statement = lex_while(string);
+                    auto out = recurse_while(while_statement, 0);
+                    printf("while (%s) {}\n", out.c_str());
+                }
+            }
+            else if (lex_token.type == LexToken::EndCurly)
+            {
+                break;
             }
         }
     }
@@ -391,29 +564,6 @@ Function lex_function(char*& string, Var return_type, char* name)
     }
 
     return function;
-}
-
-std::string recurse_var(Var return_type, int i)
-{
-    assert(i < return_type.is_mutable.size());
-    auto possible_const = !return_type.is_mutable[i] ? " const" : "";
-
-    if (return_type.var_type == VarType::Any)
-    {
-        return std::format("auto{}", possible_const);
-    }
-
-    if (i < return_type.modifier.size() && return_type.modifier[i] == Var::Modifier::Array)
-    {
-        return std::format("std::span<{}>{}", recurse_var(return_type, ++i), possible_const);
-    }
-    else if (i < return_type.modifier.size() && return_type.modifier[i] == Var::Modifier::Ptr)
-    {
-        return std::format("{}*{}", recurse_var(return_type, ++i), possible_const);
-    }
-    else {
-        return std::format("{}{}", var_types[return_type.var_type], possible_const);
-    }
 }
 
 int wmain(int argc, const wchar_t** argv)
