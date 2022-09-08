@@ -19,6 +19,7 @@ struct LexToken {
         enum VarType var_type;
         enum Keyword keyword;
     };
+    int line_num;
 };
 
 struct Var {
@@ -60,11 +61,21 @@ struct Function {
     }
 };
 
+int line_num = 0;
+
 LexToken lex_string(char*& string, bool lookahead)
 {
-    while (*string == ' ' | *string == '\n') string++; // skip spaces
+    while (true)
+    {
+        if (*string == '\n')
+        {
+            line_num++;
+        }
+        while (*string == ' ' | *string == '\n') string++; // skip spaces
+    }
 
     LexToken token;
+
     if (!*string)
     {
         token.type = LexToken::Eof;
@@ -435,6 +446,7 @@ Expr* lex_expr(char*& string, bool outer_most)
 {
     Expr* expr = new Expr;
 
+    while (*string == ' ') string++; // skip spaces
     char* pre_paren = string;
 
     while (true)
@@ -578,7 +590,8 @@ std::string recurse_expr(Expr expr, int i)
     }
     auto function_name = buffer_string_ptr(expr.dest_var.name);
     auto expr_out = recurse_expr(*expr.rhs, 0);
-    return std::format("{} {} = {}", recurse_var(expr.dest_var, 0).c_str(), std::string(function_name.content, function_name.size).c_str(), expr_out.c_str());
+    printf("%s %s;\n", recurse_var(expr.dest_var, 0).c_str(), std::string(function_name.content, function_name.size).c_str());
+    return std::format("{} = {}", std::string(function_name.content, function_name.size).c_str(), expr_out.c_str());
 }
 
 Function lex_function(char*& string, Var return_type, char* name)
@@ -743,6 +756,15 @@ int wmain(int argc, const wchar_t** argv)
                     }
                     else
                     {
+                        auto new_line = string;
+                        while (new_line --> file_buffer.content)
+                        {
+                            if (*new_line == '\n' || new_line == file_buffer.content)
+                            {
+                                printf("%d| %s\n", line_num, std::string(new_line + (*new_line == '\n'), string - new_line).c_str());
+                                printf("Expected \"(\" or \"=\"\n");
+                            }
+                        }
                         DebugLog(L"se fudeu");
                         return 1;
                     }

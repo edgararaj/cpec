@@ -8,7 +8,7 @@ def compile():
 
 def compile_test():
     print("TEST:")
-    test_dir = f"{script_dir}/test/"
+    test_dir = f"{script_dir}/test"
     test_output = f"{test_dir}/{prj_name}.exe"
     if exists(test_output):
         if not rm(test_output):
@@ -21,15 +21,15 @@ def compile_test():
         """
 
 compiler_flags = "--std=c++2a -Wall -Wno-logical-op-parentheses -Wpedantic -Wshadow -Wno-gnu-anonymous-struct -Wno-nested-anon-types"
-src_dir = f"{script_dir}/src/"
+src_dir = f"{script_dir}/src"
 
 if "debug" in argv:
     compiler_flags += " -O0 -g"
-    build_dir = f"{script_dir}/build_debug/"
+    build_dir = f"{script_dir}/build_debug"
     print("Building debug version...")
 else:
     compiler_flags += " -O2"
-    build_dir = f"{script_dir}/build_release/"
+    build_dir = f"{script_dir}/build_release"
 
 print("CPEC:")
 if exists(build_dir):
