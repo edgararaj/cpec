@@ -1,1 +1,1 @@
-i8 a b c
+[[const i8 const*]] a = 2
