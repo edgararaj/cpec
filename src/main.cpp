@@ -288,15 +288,15 @@ void print_error(LexBuffer lex_buffer, LexToken lex_token, const char* msg, cons
             auto gray_fg = "\x1b[90m";
             auto red_fg = "\x1b[31m";
             auto clear_fg = "\x1b[39m";
-            printf("%s%ls:%d:%d: %serror: ", gray_fg, lex_buffer.file_path, lex_buffer.line_num, (int)(lex_buffer.string - new_line), red_fg);
+            auto token_col = lex_buffer.string - new_line - lex_token.string_size + 1;
+            printf("%s%ls:%d:%d: %serror: ", gray_fg, lex_buffer.file_path, lex_buffer.line_num, (int)(token_col), red_fg);
             printf("%s%s%s\n", gray_fg, msg, clear_fg);
             printf(" %d | ", lex_buffer.line_num);
             if (!line)
             {
                 auto red_underline = "\x1b[4m\x1b[31m";
                 auto clear_red_underline = "\x1b[39m\x1b[24m";
-                printf("%s\n", std::string(new_line + (*new_line == '\n'), lex_buffer.string - new_line - lex_token.string_size).c_str());
-                //printf("%s%s%s%s%s\n", std::string(new_line + (*new_line == '\n'), lex_buffer.string - new_line - lex_token.string_size).c_str(), red_underline, std::string(lex_buffer.string - lex_token.string_size, lex_token.string_size).c_str(), clear_red_underline, std::string(lex_buffer.string, next_line(lex_buffer.string) - lex_buffer.string).c_str());
+                printf("%s%s%s%s%s\n", std::string(new_line + (*new_line == '\n'), token_col - 1).c_str(), red_underline, std::string(lex_buffer.string - lex_token.string_size, lex_token.string_size).c_str(), clear_red_underline, std::string(lex_buffer.string, next_line(lex_buffer.string) - lex_buffer.string).c_str());
             }
             else
             {
@@ -377,7 +377,25 @@ VarDecl lex_vardecl(char*& string, Var dest_type)
     return var_decl;
 }
 
-Var lex_var(LexBuffer& lex_buffer, LexToken first_token)
+template <typename T>
+struct ErrorOr
+{
+    ErrorOr()
+    {
+        error = true;
+    }
+
+    ErrorOr(T ok)
+    {
+        error = false;
+        content = ok;
+    }
+
+    T content;
+    bool error;
+};
+
+ErrorOr<Var> lex_var(LexBuffer& lex_buffer, LexToken first_token)
 {
     Var variable = {.var_type = VarType::Any};
     LexToken lex_token;
@@ -393,8 +411,7 @@ Var lex_var(LexBuffer& lex_buffer, LexToken first_token)
             lex_token = lex_string(lex_buffer, true);
             if (lex_token.type != LexToken::VarType && lex_token.type != LexToken::Mut && lex_token.type != LexToken::Ptr && lex_token.type != LexToken::StartRect && lex_token.type != LexToken::Let)
             {
-                print_error(lex_buffer, lex_token, "unknown token", 0);
-                return variable;
+                break;
             }
             else
             {
@@ -445,6 +462,13 @@ Var lex_var(LexBuffer& lex_buffer, LexToken first_token)
 
         first_time = false;
     } 
+
+    if (lex_token.type == LexToken::Name)
+    {
+        lex_string(lex_buffer, false);
+        print_error(lex_buffer, lex_token, "unknown token", 0);
+        return {};
+    }
 
     auto starting_arrays = 0;
     for (auto modifier: variable.modifier) 
@@ -564,7 +588,7 @@ struct Expr {
 //         }
 //     }
 // }
-Expr* lex_expr(LexBuffer& lex_buffer, bool outer_most)
+ErrorOr<Expr*> lex_expr(LexBuffer& lex_buffer, bool outer_most)
 {
     Expr* expr = new Expr;
 
@@ -586,7 +610,9 @@ Expr* lex_expr(LexBuffer& lex_buffer, bool outer_most)
                 capsule.pre.size = lex_buffer.string - pre_paren - 1;
             }
 
-            capsule.inside = lex_expr(lex_buffer, false);
+            auto error = lex_expr(lex_buffer, false);
+            if (error.error) return {};
+            capsule.inside = error.content;
 
             char* pre_end_paren = lex_buffer.string;
 
@@ -601,7 +627,9 @@ Expr* lex_expr(LexBuffer& lex_buffer, bool outer_most)
                     capsule.post.size = lex_buffer.string - pre_end_paren - 1;
                     expr->capsules.push_back(capsule);
                     capsule = {};
-                    capsule.inside = lex_expr(lex_buffer, false);
+                    auto error = lex_expr(lex_buffer, false);
+                    if (error.error) return {};
+                    capsule.inside = error.content;
                     pre_end_paren = lex_buffer.string;
                 }
                 if (outer_most && (is_newline || is_eof) || !outer_most && lex_token.type == LexToken::EndParen)
@@ -615,7 +643,9 @@ Expr* lex_expr(LexBuffer& lex_buffer, bool outer_most)
         }
         else if (possibly_var(lex_token.type))
         {
-            auto variable = lex_var(lex_buffer, lex_token);
+            auto error = lex_var(lex_buffer, lex_token);
+            if (error.error) return {};
+            auto variable = error.content;
 
             lex_token = lex_string(lex_buffer, false);
             if (lex_token.type == LexToken::Name)
@@ -626,7 +656,9 @@ Expr* lex_expr(LexBuffer& lex_buffer, bool outer_most)
                 {
                     expr->type = Expr::VarInit;
                     expr->dest_var = variable;
-                    expr->rhs = lex_expr(lex_buffer, false);
+                    auto error = lex_expr(lex_buffer, false);
+                    if (error.error) return {};
+                    expr->rhs = error.content;
                     break;
                 }
                 else
@@ -727,7 +759,9 @@ Function lex_function(LexBuffer& lex_buffer, Var return_type)
         auto lex_token = lex_string(lex_buffer, false);
         if (possibly_var(lex_token.type))
         {
-            auto var = lex_var(lex_buffer, lex_token);
+            auto error = lex_var(lex_buffer, lex_token);
+            if (error.error) break;
+            auto var = error.content;
             lex_token = lex_string(lex_buffer, false);
             if (lex_token.type == LexToken::Name)
             {
@@ -781,7 +815,9 @@ Function lex_function(LexBuffer& lex_buffer, Var return_type)
             lex_token = lex_string(lex_buffer, false);
             if (possibly_var(lex_token.type))
             {
-                auto variable = lex_var(lex_buffer, lex_token);
+                auto error = lex_var(lex_buffer, lex_token);
+                if (error.error) break;
+                auto variable = error.content;
 
                 lex_token = lex_string(lex_buffer, false);
                 if (lex_token.type == LexToken::Name)
@@ -849,7 +885,9 @@ int wmain(int argc, const wchar_t** argv)
             auto lex_token = lex_string(lex_buffer, false);
             if (possibly_var(lex_token.type))
             {
-                auto variable = lex_var(lex_buffer, lex_token);
+                auto error = lex_var(lex_buffer, lex_token);
+                if (error.error) break;
+                auto variable = error.content;
 
                 lex_token = lex_string(lex_buffer, false);
                 if (lex_token.type == LexToken::Name)
@@ -879,7 +917,9 @@ int wmain(int argc, const wchar_t** argv)
                     {
                         auto out = recurse_var(variable, 0);
 
-                        auto expr = lex_expr(lex_buffer, true);
+                        auto error = lex_expr(lex_buffer, true);
+                        if (error.error) break;
+                        auto expr = error.content;
                         auto expr_out = recurse_expr(*expr, 0);
 
                         auto var_name = buffer_string_ptr(variable.name);
