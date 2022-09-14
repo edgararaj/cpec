@@ -1,2 +1,1 @@
-let a = 3 - 1
-let b = ((let c = 3) < 2) == 2
+while (let b = 3 < a) < 3
