@@ -1,1 +1,1 @@
-[[const i8 const*]] a = 2
+<i8> a = 2

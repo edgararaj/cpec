@@ -13,7 +13,7 @@
 
 struct LexToken {
     enum Type {
-        VarType, Keyword, Name, Number, Mut, Let, Ptr, Eof, StartParen, EndParen, StartRect, EndRect, StartCurly, EndCurly, Assign, Comma, SLComment, LessThen, BiggerThen, Plus, Minus
+        VarType, Keyword, Name, Number, Mut, Let, Multiply, Eof, StartParen, EndParen, StartRect, EndRect, StartCurly, EndCurly, Assign, Comma, SLComment, LessThen, BiggerThen, Plus, Minus, StartCarrot, EndCarrot
     } type;
 
     union {
@@ -119,7 +119,7 @@ LexToken lex_string(LexBuffer& lex_buffer, bool lookahead)
     }
     if (*lex_buffer.string == '*')
     {
-        token.type = LexToken::Ptr;
+        token.type = LexToken::Multiply;
         if (!lookahead) lex_buffer.string += 1;
         token.string_size = 1;
         return token;
@@ -148,6 +148,20 @@ LexToken lex_string(LexBuffer& lex_buffer, bool lookahead)
     if (*lex_buffer.string == ']')
     {
         token.type = LexToken::EndRect;
+        if (!lookahead) lex_buffer.string += 1;
+        token.string_size = 1;
+        return token;
+    }
+    if (*lex_buffer.string == '<')
+    {
+        token.type = LexToken::StartCarrot;
+        if (!lookahead) lex_buffer.string += 1;
+        token.string_size = 1;
+        return token;
+    }
+    if (*lex_buffer.string == '>')
+    {
+        token.type = LexToken::EndCarrot;
         if (!lookahead) lex_buffer.string += 1;
         token.string_size = 1;
         return token;
@@ -409,7 +423,7 @@ ErrorOr<Var> lex_var(LexBuffer& lex_buffer, LexToken first_token)
         else
         {
             lex_token = lex_string(lex_buffer, true);
-            if (lex_token.type != LexToken::VarType && lex_token.type != LexToken::Mut && lex_token.type != LexToken::Ptr && lex_token.type != LexToken::StartRect && lex_token.type != LexToken::Let)
+            if (lex_token.type != LexToken::VarType && lex_token.type != LexToken::Mut && lex_token.type != LexToken::StartCarrot && lex_token.type != LexToken::StartRect && lex_token.type != LexToken::Let)
             {
                 break;
             }
@@ -438,7 +452,7 @@ ErrorOr<Var> lex_var(LexBuffer& lex_buffer, LexToken first_token)
                 variable.is_mutable.push_back(false);
             }
 
-            if (lex_token.type == LexToken::Ptr)
+            if (lex_token.type == LexToken::StartCarrot)
             {
                 variable.modifier.push_back(Var::Modifier::Ptr);
             }
@@ -463,37 +477,53 @@ ErrorOr<Var> lex_var(LexBuffer& lex_buffer, LexToken first_token)
         first_time = false;
     } 
 
-    if (lex_token.type == LexToken::Name)
-    {
-        lex_string(lex_buffer, false);
-        print_error(lex_buffer, lex_token, "unknown token", 0);
-        return {};
-    }
-
     auto starting_arrays = 0;
+    auto starting_ptrs = 0;
     for (auto modifier: variable.modifier) 
     {
-        if (modifier == Var::Array)
+        if (modifier == Var::Ptr)
+            starting_ptrs++;
+        else if (modifier == Var::Array)
             starting_arrays++;
     }
 
+    auto lex_token2 = lex_token;
+
     auto closing_arrays = 0;
+    auto closing_ptrs = 0;
     while (true)
     {
-        if (lex_token.type == LexToken::EndRect)
+        if (lex_token2.type == LexToken::EndRect)
         {
-            lex_token = lex_string(lex_buffer, false);
+            lex_token2 = lex_string(lex_buffer, false);
             closing_arrays++;
+        }
+        else if (lex_token2.type == LexToken::EndCarrot)
+        {
+            lex_token2 = lex_string(lex_buffer, false);
+            closing_ptrs++;
         }
         else
         {
-            if (closing_arrays != starting_arrays)
+            if (closing_arrays != starting_arrays || closing_ptrs != starting_ptrs)
             {
-                print_error(lex_buffer, lex_token, "wrong number of ending ]", 0);
+                if (lex_token.type == LexToken::Name)
+                {
+                    lex_string(lex_buffer, false);
+                    print_error(lex_buffer, lex_token, "unknown token", 0);
+                }
+                else
+                {
+                    if (closing_arrays != starting_arrays)
+                        print_error(lex_buffer, lex_token2, "wrong number of ending ]", 0);
+                    else
+                        print_error(lex_buffer, lex_token2, "wrong number of ending >", 0);
+                }
+                return {};
             }
             break;
         }
-        lex_token = lex_string(lex_buffer, true);
+        lex_token2 = lex_string(lex_buffer, true);
     }
 
     return variable;
@@ -501,7 +531,7 @@ ErrorOr<Var> lex_var(LexBuffer& lex_buffer, LexToken first_token)
 
 bool possibly_var(LexToken::Type type)
 {
-    return type == LexToken::Mut || type == LexToken::VarType || type == LexToken::StartRect || type == LexToken::Let;
+    return type == LexToken::Mut || type == LexToken::VarType || type == LexToken::StartRect || type == LexToken::Let || type == LexToken::StartCarrot;
 }
 
 struct Capsule {
@@ -673,7 +703,14 @@ ErrorOr<Expr*> lex_expr(LexBuffer& lex_buffer, bool outer_most)
                 break;
             }
         }
-        else if (outer_most && (is_newline || is_eof) || !outer_most && lex_token.type == LexToken::EndParen)
+        else if (outer_most && (is_newline || is_eof))
+        {
+            expr->type = Expr::Leaf;
+            expr->leaf.content = pre_paren;
+            expr->leaf.size = lex_buffer.string - pre_paren;
+            break;
+        }
+        else if (!outer_most && lex_token.type == LexToken::EndParen)
         {
             expr->type = Expr::Leaf;
             expr->leaf.content = pre_paren;
