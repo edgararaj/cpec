@@ -13,7 +13,7 @@
 
 struct LexToken {
     enum Type {
-        VarType, Keyword, Name, Number, Mut, Let, Multiply, Eof, StartParen, EndParen, StartRect, EndRect, StartCurly, EndCurly, Assign, Comma, SLComment, LessThen, BiggerThen, Plus, Minus, StartCarrot, EndCarrot
+        VarType, Keyword, Name, Number, Mut, Let, Multiply, Eof, StartParen, EndParen, StartRect, EndRect, StartCurly, EndCurly, Assign, Comma, SLComment, LessThen, BiggerThen, Plus, Minus
     } type;
 
     union {
@@ -148,20 +148,6 @@ LexToken lex_string(LexBuffer& lex_buffer, bool lookahead)
     if (*lex_buffer.string == ']')
     {
         token.type = LexToken::EndRect;
-        if (!lookahead) lex_buffer.string += 1;
-        token.string_size = 1;
-        return token;
-    }
-    if (*lex_buffer.string == '<')
-    {
-        token.type = LexToken::StartCarrot;
-        if (!lookahead) lex_buffer.string += 1;
-        token.string_size = 1;
-        return token;
-    }
-    if (*lex_buffer.string == '>')
-    {
-        token.type = LexToken::EndCarrot;
         if (!lookahead) lex_buffer.string += 1;
         token.string_size = 1;
         return token;
@@ -423,7 +409,7 @@ ErrorOr<Var> lex_var(LexBuffer& lex_buffer, LexToken first_token)
         else
         {
             lex_token = lex_string(lex_buffer, true);
-            if (lex_token.type != LexToken::VarType && lex_token.type != LexToken::Mut && lex_token.type != LexToken::StartCarrot && lex_token.type != LexToken::StartRect && lex_token.type != LexToken::Let)
+            if (lex_token.type != LexToken::VarType && lex_token.type != LexToken::Mut && lex_token.type != LexToken::LessThen && lex_token.type != LexToken::StartRect && lex_token.type != LexToken::Let)
             {
                 break;
             }
@@ -452,7 +438,7 @@ ErrorOr<Var> lex_var(LexBuffer& lex_buffer, LexToken first_token)
                 variable.is_mutable.push_back(false);
             }
 
-            if (lex_token.type == LexToken::StartCarrot)
+            if (lex_token.type == LexToken::LessThen)
             {
                 variable.modifier.push_back(Var::Modifier::Ptr);
             }
@@ -498,7 +484,7 @@ ErrorOr<Var> lex_var(LexBuffer& lex_buffer, LexToken first_token)
             lex_token2 = lex_string(lex_buffer, false);
             closing_arrays++;
         }
-        else if (lex_token2.type == LexToken::EndCarrot)
+        else if (lex_token2.type == LexToken::BiggerThen)
         {
             lex_token2 = lex_string(lex_buffer, false);
             closing_ptrs++;
@@ -531,7 +517,7 @@ ErrorOr<Var> lex_var(LexBuffer& lex_buffer, LexToken first_token)
 
 bool possibly_var(LexToken::Type type)
 {
-    return type == LexToken::Mut || type == LexToken::VarType || type == LexToken::StartRect || type == LexToken::Let || type == LexToken::StartCarrot;
+    return type == LexToken::Mut || type == LexToken::VarType || type == LexToken::StartRect || type == LexToken::Let || type == LexToken::LessThen;
 }
 
 struct Capsule {
@@ -628,93 +614,99 @@ ErrorOr<Expr*> lex_expr(LexBuffer& lex_buffer, bool outer_most)
     while (true)
     {
         auto is_newline = !*lex_buffer.string || *lex_buffer.string == '\n';
-        auto lex_token = lex_string(lex_buffer, false);
+        auto lex_token = lex_string(lex_buffer, true);
         auto is_eof = lex_token.type == LexToken::Eof;
-        if (lex_token.type == LexToken::StartParen)
+        if (!is_newline && !is_eof)
         {
-            expr->type = Expr::Capsules;
-            Capsule capsule = {};
-            if (outer_most)
+            lex_string(lex_buffer, false);
+            if (lex_token.type == LexToken::StartParen)
             {
-                capsule.pre.content = pre_paren;
-                capsule.pre.size = lex_buffer.string - pre_paren - 1;
-            }
-
-            auto error = lex_expr(lex_buffer, false);
-            if (error.error) return {};
-            capsule.inside = error.content;
-
-            char* pre_end_paren = lex_buffer.string;
-
-            while (true)
-            {
-                is_newline = *lex_buffer.string == '\n';
-                lex_token = lex_string(lex_buffer, false);
-                is_eof = lex_token.type == LexToken::Eof;
-                if (lex_token.type == LexToken::StartParen)
+                expr->type = Expr::Capsules;
+                Capsule capsule = {};
+                if (outer_most)
                 {
-                    capsule.post.content = pre_end_paren;
-                    capsule.post.size = lex_buffer.string - pre_end_paren - 1;
-                    expr->capsules.push_back(capsule);
-                    capsule = {};
-                    auto error = lex_expr(lex_buffer, false);
-                    if (error.error) return {};
-                    capsule.inside = error.content;
-                    pre_end_paren = lex_buffer.string;
+                    capsule.pre.content = pre_paren;
+                    capsule.pre.size = lex_buffer.string - pre_paren - 1;
                 }
-                if (outer_most && (is_newline || is_eof) || !outer_most && lex_token.type == LexToken::EndParen)
+
+                auto error = lex_expr(lex_buffer, false);
+                if (error.error)
+                    return {};
+                capsule.inside = error.content;
+
+                char *pre_end_paren = lex_buffer.string;
+
+                while (true)
                 {
-                    capsule.post.content = pre_end_paren;
-                    capsule.post.size = lex_buffer.string - pre_end_paren - 1 + (is_eof ? 1: 0);
-                    expr->capsules.push_back(capsule);
-                    return expr;
+                    is_newline = *lex_buffer.string == '\n';
+                    lex_token = lex_string(lex_buffer, false);
+                    is_eof = lex_token.type == LexToken::Eof;
+                    if (lex_token.type == LexToken::StartParen)
+                    {
+                        capsule.post.content = pre_end_paren;
+                        capsule.post.size = lex_buffer.string - pre_end_paren - 1;
+                        expr->capsules.push_back(capsule);
+                        capsule = {};
+                        auto error = lex_expr(lex_buffer, false);
+                        if (error.error)
+                            return {};
+                        capsule.inside = error.content;
+                        pre_end_paren = lex_buffer.string;
+                    }
+                    if (outer_most && (is_newline || is_eof) || !outer_most && lex_token.type == LexToken::EndParen)
+                    {
+                        capsule.post.content = pre_end_paren;
+                        capsule.post.size = lex_buffer.string - pre_end_paren - 1 + (is_eof ? 1 : 0);
+                        expr->capsules.push_back(capsule);
+                        return expr;
+                    }
                 }
             }
-        }
-        else if (possibly_var(lex_token.type))
-        {
-            auto error = lex_var(lex_buffer, lex_token);
-            if (error.error) return {};
-            auto variable = error.content;
-
-            lex_token = lex_string(lex_buffer, false);
-            if (lex_token.type == LexToken::Name)
+            else if (lex_token.type == LexToken::Mut || lex_token.type == LexToken::Let)
             {
-                variable.name = lex_token.name;
+                Var variable = {.var_type = VarType::Any};
+                variable.is_mutable.push_back(lex_token.type == LexToken::Mut);
+
                 lex_token = lex_string(lex_buffer, false);
-                if (lex_token.type == LexToken::Assign)
+                if (lex_token.type == LexToken::Name)
                 {
-                    expr->type = Expr::VarInit;
-                    expr->dest_var = variable;
-                    auto error = lex_expr(lex_buffer, false);
-                    if (error.error) return {};
-                    expr->rhs = error.content;
-                    break;
+                    variable.name = lex_token.name;
+                    lex_token = lex_string(lex_buffer, false);
+                    if (lex_token.type == LexToken::Assign)
+                    {
+                        expr->type = Expr::VarInit;
+                        expr->dest_var = variable;
+                        auto error = lex_expr(lex_buffer, false);
+                        if (error.error)
+                            return {};
+                        expr->rhs = error.content;
+                        break;
+                    }
+                    else
+                    {
+                        print_expectation_error(lex_buffer, lex_token, {"="});
+                        break;
+                    }
                 }
                 else
                 {
-                    print_expectation_error(lex_buffer, lex_token, {"="});
+                    print_expectation_error(lex_buffer, lex_token, {"name"});
                     break;
                 }
             }
-            else
+            else if (!outer_most && lex_token.type == LexToken::EndParen)
             {
-                print_expectation_error(lex_buffer, lex_token, {"name"});
+                expr->type = Expr::Leaf;
+                expr->leaf.content = pre_paren;
+                expr->leaf.size = lex_buffer.string - pre_paren - 1;
                 break;
             }
         }
-        else if (outer_most && (is_newline || is_eof))
+        else if (outer_most)
         {
             expr->type = Expr::Leaf;
             expr->leaf.content = pre_paren;
             expr->leaf.size = lex_buffer.string - pre_paren;
-            break;
-        }
-        else if (!outer_most && lex_token.type == LexToken::EndParen)
-        {
-            expr->type = Expr::Leaf;
-            expr->leaf.content = pre_paren;
-            expr->leaf.size = lex_buffer.string - pre_paren - 1;
             break;
         }
     }
