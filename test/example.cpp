@@ -1,1 +1,3 @@
-while (let b = 3 < a) < 3
+while let b = (3 < 3) {
+
+}

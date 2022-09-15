@@ -615,9 +615,23 @@ ErrorOr<Expr*> lex_expr(LexBuffer& lex_buffer, bool outer_most)
     {
         auto is_newline = !*lex_buffer.string || *lex_buffer.string == '\n';
         auto lex_token = lex_string(lex_buffer, true);
-        is_newline = is_newline || lex_token.type == LexToken::StartCurly;
         auto is_eof = lex_token.type == LexToken::Eof;
-        if (!is_newline && !is_eof)
+        if (is_newline || is_eof || lex_token.type == LexToken::StartCurly)
+        {
+            if (outer_most || lex_token.type == LexToken::StartCurly)
+            {
+                expr->type = Expr::Leaf;
+                expr->leaf.content = pre_paren;
+                expr->leaf.size = lex_buffer.string - pre_paren;
+                return expr;
+            }
+            else
+            {
+                print_expectation_error(lex_buffer, lex_token, {")"});
+                return {};
+            }
+        }
+        else
         {
             lex_string(lex_buffer, false);
             if (lex_token.type == LexToken::StartParen)
@@ -641,9 +655,23 @@ ErrorOr<Expr*> lex_expr(LexBuffer& lex_buffer, bool outer_most)
                 {
                     is_newline = !*lex_buffer.string || *lex_buffer.string == '\n';
                     lex_token = lex_string(lex_buffer, true);
-                    is_newline = is_newline || lex_token.type == LexToken::StartCurly;
                     is_eof = lex_token.type == LexToken::Eof;
-                    if (!is_newline && !is_eof)
+                    if (is_newline || is_eof || lex_token.type == LexToken::StartCurly)
+                    {
+                        if (outer_most || lex_token.type == LexToken::StartCurly)
+                        {
+                            capsule.post.content = pre_end_paren;
+                            capsule.post.size = lex_buffer.string - pre_end_paren - 1 + (is_eof ? 1 : 0);
+                            expr->capsules.push_back(capsule);
+                            return expr;
+                        }
+                        else
+                        {
+                            print_expectation_error(lex_buffer, lex_token, {")"});
+                            return {};
+                        }
+                    }
+                    else
                     {
                         lex_string(lex_buffer, false);
                         if (lex_token.type == LexToken::StartParen)
@@ -658,21 +686,22 @@ ErrorOr<Expr*> lex_expr(LexBuffer& lex_buffer, bool outer_most)
                             capsule.inside = error.content;
                             pre_end_paren = lex_buffer.string;
                         }
-                        else if (!outer_most && lex_token.type == LexToken::EndParen)
+                        else if (lex_token.type == LexToken::EndParen)
                         {
-                            capsule.post.content = pre_end_paren;
-                            capsule.post.size = lex_buffer.string - pre_end_paren + (is_eof ? 1 : 0);
-                            expr->capsules.push_back(capsule);
-                            return expr;
+                            if (!outer_most)
+                            {
+                                capsule.post.content = pre_end_paren;
+                                capsule.post.size = lex_buffer.string - pre_end_paren + (is_eof ? 1 : 0);
+                                expr->capsules.push_back(capsule);
+                                return expr;
+                            }
+                            else
+                            {
+                                print_error(lex_buffer, lex_token, "unexpected \")\"", 0);
+                                return {};
+                            }
                         }
 
-                    }
-                    else if (outer_most)
-                    {
-                        capsule.post.content = pre_end_paren;
-                        capsule.post.size = lex_buffer.string - pre_end_paren - 1 + (is_eof ? 1 : 0);
-                        expr->capsules.push_back(capsule);
-                        return expr;
                     }
                 }
             }
@@ -690,7 +719,7 @@ ErrorOr<Expr*> lex_expr(LexBuffer& lex_buffer, bool outer_most)
                     {
                         expr->type = Expr::VarInit;
                         expr->dest_var = variable;
-                        auto error = lex_expr(lex_buffer, false);
+                        auto error = lex_expr(lex_buffer, outer_most);
                         if (error.error)
                             return {};
                         expr->rhs = error.content;
@@ -708,20 +737,21 @@ ErrorOr<Expr*> lex_expr(LexBuffer& lex_buffer, bool outer_most)
                     break;
                 }
             }
-            else if (!outer_most && lex_token.type == LexToken::EndParen)
+            else if (lex_token.type == LexToken::EndParen)
             {
-                expr->type = Expr::Leaf;
-                expr->leaf.content = pre_paren;
-                expr->leaf.size = lex_buffer.string - pre_paren - 1;
-                break;
+                if (!outer_most)
+                {
+                    expr->type = Expr::Leaf;
+                    expr->leaf.content = pre_paren;
+                    expr->leaf.size = lex_buffer.string - pre_paren - 1;
+                    return expr;
+                }
+                else 
+                {
+                    print_error(lex_buffer, lex_token, "unexpected \")\"", 0);
+                    return {};
+                }
             }
-        }
-        else if (outer_most)
-        {
-            expr->type = Expr::Leaf;
-            expr->leaf.content = pre_paren;
-            expr->leaf.size = lex_buffer.string - pre_paren;
-            break;
         }
     }
 
